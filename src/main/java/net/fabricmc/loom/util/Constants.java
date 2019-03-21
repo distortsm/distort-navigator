@@ -34,7 +34,11 @@ public class Constants {
     public static final String CONFIG_MINECRAFT_DEPS_CLIENT = "minecraftClientDependencies";
     public static final String CONFIG_MINECRAFT_NATIVES = "minecraftNatives";
 
+    public static final String CONFIG_STARMADE_DEPS = "starmadeDependencies";
+    public static final String CONFIG_STARMADE_NATIVES = "starmadeNatives";
+
     //Tasks
+    public static final String TASK_DOWNLOAD_GAME_JAR = "downloadGameJar";
     public static final String TASK_DOWNLOAD_CLIENT_JAR = "downloadClientJar";
     public static final String TASK_DOWNLOAD_SERVER_JAR = "downloadServerJar";
     public static final String TASK_DOWNLOAD_ASSETS_INDEX = "downloadAssetsIndex";

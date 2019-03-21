@@ -24,10 +24,17 @@
 
 package net.fabricmc.loom.data;
 
+import com.google.common.base.Strings;
 import com.google.gson.Gson;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.tools.ant.taskdefs.Length;
+
 import net.fabricmc.loom.util.Utils;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -42,6 +49,30 @@ public class AssetIndexJson {
 
     public static AssetIndexJson fromJson(File file) {
         return Utils.fromJson(gson, file, AssetIndexJson.class);
+    }
+
+    public static AssetIndexJson fromStarMadeChecksums(File file) throws IOException {
+        AssetIndexJson assetIndex = new AssetIndexJson();
+        assetIndex.objects = new HashMap<String,AssetObject>();
+
+        FileUtils.readLines(file, "UTF-8").stream().forEach(entry -> {
+            if (Strings.isNullOrEmpty(entry)) {
+                return;
+            }
+            try {
+                // Although the checksums are space seperated. it doesn't account for asset names with spaces...
+                String[] tokens = entry.split(" ");
+                String name = entry.substring(0, entry.length() - tokens[tokens.length - 1].length() - tokens[tokens.length - 2].length() - 2);
+                AssetObject asset = assetIndex.new AssetObject() {{
+                        size = Integer.parseInt(tokens[tokens.length - 2]);
+                        hash = tokens[tokens.length - 1];
+                    }};
+                assetIndex.objects.put(name, asset);
+            }
+            catch(Exception e) { throw new RuntimeException(e); }
+        });
+
+        return assetIndex;
     }
 
     public class AssetObject {

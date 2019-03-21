@@ -28,6 +28,8 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+
+import net.fabricmc.loom.data.AssetIndexFormat;
 import net.fabricmc.loom.data.VersionInfoJson;
 import net.fabricmc.loom.data.VersionManifestJson;
 import net.fabricmc.loom.tasks.*;
@@ -54,6 +56,7 @@ import org.gradle.api.artifacts.query.ArtifactResolutionQuery;
 import org.gradle.api.artifacts.result.ArtifactResult;
 import org.gradle.api.artifacts.result.ComponentArtifactsResult;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.FileTree;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.logging.Logging;
@@ -67,6 +70,9 @@ import org.gradle.language.base.artifact.SourcesArtifact;
 import org.gradle.language.jvm.tasks.ProcessResources;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
@@ -81,12 +87,13 @@ import static net.fabricmc.loom.util.Utils.*;
  * Created by covers1624 on 5/02/19.
  */
 @SuppressWarnings ("UnstableApiUsage")
-public class LoomGradlePlugin implements Plugin<Project> {
+public class NavigatorGradlePlugin implements Plugin<Project> {
 
-    private static final Logger logger = Logging.getLogger("Loom");
+    private static final Logger logger = Logging.getLogger("Navigator");
 
-    public static final String RESOURCES_URL = "http://resources.download.minecraft.net/";
+    public static final String RESOURCES_URL = "http://files.star-made.org/";
 
+    // TODO: Compile a list of client dependencies
     public static final List<String> clientDependencyMatches = Arrays.asList(//
             "java3d",//
             "paulscode",//
@@ -101,23 +108,23 @@ public class LoomGradlePlugin implements Plugin<Project> {
     private static final Map<String, String> substMap = new HashMap<>();
     private static final StringSubstitutor substr = new StringSubstitutor(substMap);
 
-    protected LoomGradleExtension extension;
+    protected NavigatorGradleExtension extension;
 
     protected File userCache;
     protected File remappedRepo;
 
-    protected VersionManifestJson.Version minecraftVersion;
+    protected VersionManifestJson.Version starmadeVersion;
     protected VersionInfoJson versionInfo;
 
-    protected TaskProvider<DownloadTask> dlClientJarTask;
+    protected TaskProvider<DownloadTask> dlGameJarTask;
     protected TaskProvider<DownloadTask> dlServerJarTask;
     protected TaskProvider<DownloadTask> dlAssetsIndexTask;
-    protected TaskProvider<? extends DownloadAssetsTask> dlAssetsTask;
+    protected TaskProvider<DownloadStarMadeAssetsTask> dlAssetsTask;
     protected TaskProvider<MergeJarTask> mergeJarsTask;
     protected TaskProvider<ExtractMappingsTask> extractMappingsTask;
-    protected TaskProvider<TinyRemapTask> remapMinecraftIntermediaryTask;
-    protected TaskProvider<TinyRemapTask> remapMinecraftNamedTask;
-    protected TaskProvider<FernFlowerTask> decompileMinecraftNamedTask;
+    protected TaskProvider<TinyRemapTask> remapStarMadeIntermediaryTask;
+    protected TaskProvider<TinyRemapTask> remapStarMadeNamedTask;
+    protected TaskProvider<FernFlowerTask> decompileStarMadeNamedTask;
     protected TaskProvider<RemapLineNumbersTask> remapNamedLineNumbersTask;
     protected TaskProvider<Task> remapModCompileTask;
     protected TaskProvider<Task> ideSetupTask;
@@ -133,7 +140,7 @@ public class LoomGradlePlugin implements Plugin<Project> {
 
     @Override
     public void apply(Project project) {
-        extension = project.getExtensions().create("minecraft", LoomGradleExtension.class, project);
+        extension = project.getExtensions().create("starmade", NavigatorGradleExtension.class, project);
         userCache = new File(project.getGradle().getGradleUserHomeDir(), "caches/fabric-loom");
         remappedRepo = new File(userCache, "/remapped");
         remappedRepo.mkdirs();
@@ -158,20 +165,17 @@ public class LoomGradlePlugin implements Plugin<Project> {
         repositories.maven(e -> e.setUrl(remappedRepo.getAbsoluteFile()));
         repositories.mavenLocal();
         repositories.maven(e -> e.setUrl("https://maven.fabricmc.net/"));
-        repositories.maven(e -> e.setUrl("https://libraries.minecraft.net/"));
         repositories.jcenter();
         repositories.mavenCentral();
 
         project.getPlugins().apply("java");
 
         Configuration compile = configurations.getByName("compile");
-        Configuration mcDeps = configurations.maybeCreate(CONFIG_MINECRAFT_DEPS);
-        Configuration mcClientDeps = configurations.maybeCreate(CONFIG_MINECRAFT_DEPS_CLIENT);
-        Configuration mcAllDeps = configurations.maybeCreate("minecraftAllDependencies");
-        Configuration mcNatives = configurations.maybeCreate(CONFIG_MINECRAFT_NATIVES);
-        Configuration mcIntermediary = configurations.maybeCreate("minecraftIntermediary");
-        Configuration mcNamed = configurations.maybeCreate("minecraftNamed");
-        Configuration mcNamedLinemapped = configurations.maybeCreate("minecraftNamedLinemapped");
+        Configuration smDeps = configurations.maybeCreate(CONFIG_STARMADE_DEPS);
+        Configuration smNatives = configurations.maybeCreate(CONFIG_STARMADE_NATIVES);
+        Configuration smIntermediary = configurations.maybeCreate("starmadeIntermediary");
+        Configuration smNamed = configurations.maybeCreate("starmadeNamed");
+        Configuration smNamedLinemapped = configurations.maybeCreate("starmadeNamedLinemapped");
         Configuration modCompile = configurations.maybeCreate("modCompile");
         Configuration remappedDeps = configurations.maybeCreate("remappedDeps");
         Configuration remappedTransitiveDeps = configurations.maybeCreate("remappedTransitiveDeps").setTransitive(false);
@@ -182,8 +186,7 @@ public class LoomGradlePlugin implements Plugin<Project> {
             dependencies.add("annotationProcessor", project.files(dep));
         }
 
-        mcAllDeps.extendsFrom(mcDeps, mcClientDeps);
-        compile.extendsFrom(mcAllDeps, mcNatives, remappedDeps, remappedTransitiveDeps);
+        compile.extendsFrom(smDeps, smNatives, remappedDeps, remappedTransitiveDeps);
         annotationProcessor.extendsFrom(compile);
 
         project.afterEvaluate(p -> {
@@ -196,27 +199,31 @@ public class LoomGradlePlugin implements Plugin<Project> {
         //TODO, Re-Evaluate this at some point, perhaps there is a more modular way to do this,
         //       i.e a Local version file, or something of the sort.
         project.afterEvaluate(p -> {
-            File manifestFile = new File(userCache, "versions/version_manifest.json");
+            File manifestFile = new File(userCache, "versions/version_manifest.lst");
             DownloadAction dlManifest = new DownloadAction(project);
-            dlManifest.setSrc("https://launchermeta.mojang.com/mc/game/version_manifest.json");
+            dlManifest.setSrc(RESOURCES_URL+"releasebuildindex");
             dlManifest.setDest(manifestFile);
             dlManifest.setUseETag(true);
             dlManifest.setOnlyIfModified(true);
             sneaky(dlManifest::execute);
 
-            VersionManifestJson manifest = VersionManifestJson.fromJson(manifestFile);
-            minecraftVersion = manifest.findVersion(extension.version)//
-                    .orElseThrow(() -> new RuntimeException("Failed to find minecraft version: " + extension.version));
+            try {
+            VersionManifestJson manifest = VersionManifestJson.fromStarMadeIndex(manifestFile);
+            starmadeVersion = manifest.findVersion(extension.version)//
+                    .orElseThrow(() -> new RuntimeException("Failed to find StarMade version: " + extension.version));
+            } catch (IOException ex) { throw new RuntimeException(ex); }
 
-            File versionFile = new File(userCache, format("versions/{0}/{0}.json", extension.version));
+            File versionFile = new File(userCache, format("versions/{0}/checksums.lst", extension.version));
             DownloadAction dlVersion = new DownloadAction(project);
-            dlVersion.setSrc(minecraftVersion.url);
+            dlVersion.setSrc(starmadeVersion.url + "checksums");
             dlVersion.setDest(versionFile);
             dlVersion.setUseETag(true);
             dlVersion.setOnlyIfModified(true);
             sneaky(dlVersion::execute);
 
-            versionInfo = VersionInfoJson.fromJson(versionFile);
+            try { versionInfo = VersionInfoJson.fromStarMadeChecksums(versionFile, new URL(starmadeVersion.url)); }
+            catch (Exception ex) { throw new RuntimeException(ex); }
+            /*
             versionInfo.libraries.stream()//
                     .filter(VersionInfoJson.Library::allowed)//
                     .forEach(lib -> {
@@ -234,6 +241,11 @@ public class LoomGradlePlugin implements Plugin<Project> {
                             dependencies.add(CONFIG_MINECRAFT_NATIVES, lib.getArtifact(false));
                         }
                     });
+            */
+            dependencies.add(CONFIG_STARMADE_DEPS,
+                project.files(versionInfo.downloads.entrySet().stream()
+                    .filter(entry -> entry.getValue().url.getPath().lastIndexOf("/lib/")> -1)//
+                    .map(entry -> new File(userCache, "assets/objects/" + entry.getKey())).toArray()));
 
         });
 
@@ -248,16 +260,9 @@ public class LoomGradlePlugin implements Plugin<Project> {
                     .setWorkingDir(project.file(extension.runDir));
         });
 
-        dlClientJarTask = tasks.register(TASK_DOWNLOAD_CLIENT_JAR, DownloadTask.class, t -> {
-            t.setSrc(laterURL(() -> versionInfo.downloads.get("client").url));
-            t.setDest(laterFile(() -> new File(userCache, format("versions/{0}/client.jar", extension.version))));
-            t.setUseETag(true);
-            t.setOnlyIfModified(true);
-        });
-
-        dlServerJarTask = tasks.register(TASK_DOWNLOAD_SERVER_JAR, DownloadTask.class, t -> {
-            t.setSrc(laterURL(() -> versionInfo.downloads.get("server").url));
-            t.setDest(laterFile(() -> new File(userCache, format("versions/{0}/server.jar", extension.version))));
+        dlGameJarTask = tasks.register(TASK_DOWNLOAD_GAME_JAR, DownloadTask.class, t -> {
+            t.setSrc(laterURL(() -> versionInfo.downloads.get("StarMade.jar").url));
+            t.setDest(laterFile(() -> new File(userCache, format("versions/{0}/StarMade.jar", extension.version))));
             t.setUseETag(true);
             t.setOnlyIfModified(true);
         });
@@ -266,67 +271,60 @@ public class LoomGradlePlugin implements Plugin<Project> {
             t.setSrc(laterURL(() -> versionInfo.assetIndex.url));
             t.setDest(laterFile(() -> {
                 VersionInfoJson.AssetIndex assetIndex = versionInfo.assetIndex;
-                return new File(userCache, format("assets/indexes/{0}.json", assetIndex.getId(extension.version)));
+                return new File(userCache, format("assets/indexes/{0}.lst", assetIndex.getId(extension.version)));
             }));
             t.setUseETag(true);
             t.setOnlyIfModified(true);
         });
 
-        dlAssetsTask = tasks.register(TASK_DOWNLOAD_ASSETS, DownloadMinecraftAssetsTask.class, t -> {
+        dlAssetsTask = tasks.register(TASK_DOWNLOAD_ASSETS, DownloadStarMadeAssetsTask.class, t -> {
             t.dependsOn(dlAssetsIndexTask);
+            t.setAssetFormat(AssetIndexFormat.STARMADE);
             t.setAssetsDir(new File(userCache, "assets"));
             t.setAssetIndex(laterTaskOutput(dlAssetsIndexTask));
-        });
-
-        mergeJarsTask = tasks.register(TASK_MERGE_JARS, MergeJarTask.class, t -> {
-            t.dependsOn(dlClientJarTask, dlServerJarTask);
-            t.setClientJar(laterTaskOutput(dlClientJarTask));
-            t.setServerJar(laterTaskOutput(dlServerJarTask));
-            t.setMergedJar(laterFile(() -> new File(userCache, format("versions/{0}/merged.jar", extension.version))));
-            t.setOffsetSyntheticParams(true);
-            t.setRemoveSnowmen(true);
+            t.setResourceUrl(starmadeVersion.url);
         });
 
         extractMappingsTask = tasks.register(TASK_EXTRACT_MAPPINGS, ExtractMappingsTask.class, t -> {
-            t.dependsOn(mergeJarsTask);
+            t.dependsOn(dlGameJarTask);
             t.setMappingsArtifact(laterString(() -> extension.mappings));
-            t.setMergedJar(laterTaskOutput(mergeJarsTask));
+            t.setMergedJar(laterTaskOutput(dlGameJarTask));
             t.setBaseMappings(laterFile(() -> new File(userCache, format("mappings/{0}/base.tiny", extension.mappings.replace(":", "/")))));
             t.setMappings(laterFile(() -> new File(userCache, format("mappings/{0}/mappings.tiny", extension.mappings.replace(":", "/")))));
         });
 
-        MavenNotation intermediaryArtifact = MavenNotation.parse("net.minecraft:minecraft:${version}-intermediary");
-        MavenNotation namedArtifact = MavenNotation.parse("net.minecraft:minecraft:${version}-named");
+        MavenNotation intermediaryArtifact = MavenNotation.parse("org.schema:starmade:${version}-intermediary");
+        MavenNotation namedArtifact = MavenNotation.parse("org.schema:starmade:${version}-named");
         MavenNotation namedLinemapArtifact = namedArtifact.withClassifier("linemap").withExtension("linemap");
-        MavenNotation namedLinemappedArtifact = MavenNotation.parse("net.minecraft:minecraft:${version}-named-linemapped");
-        remapMinecraftIntermediaryTask = tasks.register("remapMinecraftIntermediary", TinyRemapTask.class, t -> {
-            t.dependsOn(extractMappingsTask, mergeJarsTask);
+        MavenNotation namedLinemappedArtifact = MavenNotation.parse("org.schema:starmade:${version}-named-linemapped");
+        remapStarMadeIntermediaryTask = tasks.register("remapStarMadeIntermediaryTask", TinyRemapTask.class, t -> {
+            t.dependsOn(extractMappingsTask, dlGameJarTask, dlAssetsTask);
             t.addMappings(laterTaskOutput(extractMappingsTask));
             t.setFromMappings("official");
             t.setToMappings("intermediary");
-            t.setLibraries(mcAllDeps);
-            t.setInput(laterTaskOutput(mergeJarsTask));
+            t.setLibraries(smDeps);
+            t.setInput(laterTaskOutput(dlGameJarTask));
             t.setOutput(laterFile(() -> remap(intermediaryArtifact).subst(substr).toFile(remappedRepo)));
         });
-        project.afterEvaluate(p -> dependencies.add("minecraftIntermediary", remap(intermediaryArtifact).subst(substr).toString()));
+        project.afterEvaluate(p -> dependencies.add("starmadeIntermediary", remap(intermediaryArtifact).subst(substr).toString()));
 
-        remapMinecraftNamedTask = tasks.register("remapMinecraftNamed", TinyRemapTask.class, t -> {
-            t.dependsOn(extractMappingsTask, mergeJarsTask);
+        remapStarMadeNamedTask = tasks.register("remapStarMadeNamed", TinyRemapTask.class, t -> {
+            t.dependsOn(extractMappingsTask, dlGameJarTask, dlAssetsTask);
             t.addMappings(laterTaskOutput(extractMappingsTask));
             t.setFromMappings("official");
             t.setToMappings("named");
-            t.setLibraries(mcAllDeps);
-            t.setInput(laterTaskOutput(mergeJarsTask));
+            t.setLibraries(smDeps);
+            t.setInput(laterTaskOutput(dlGameJarTask));
             t.setOutput(laterFile(() -> remap(namedArtifact).subst(substr).toFile(remappedRepo)));
         });
-        project.afterEvaluate(p -> dependencies.add("minecraftNamed", remap(namedArtifact).subst(substr).toString()));
+        project.afterEvaluate(p -> dependencies.add("starmadeNamed", remap(namedArtifact).subst(substr).toString()));
 
-        decompileMinecraftNamedTask = tasks.register("decompileMinecraftNamed", FernFlowerTask.class, t -> {
-            t.dependsOn(remapMinecraftNamedTask);
-            t.setInput(laterTaskOutput(remapMinecraftNamedTask));
+        decompileStarMadeNamedTask = tasks.register("decompileStarMadeNamed", FernFlowerTask.class, t -> {
+            t.dependsOn(remapStarMadeNamedTask);
+            t.setInput(laterTaskOutput(remapStarMadeNamedTask));
             t.setOutput(laterFile(() -> remap(namedArtifact).subst(substr).withClassifier("sources").toFile(remappedRepo)));
             t.setLineMapFile(laterFile(() -> remap(namedLinemapArtifact).subst(substr).toFile(remappedRepo)));
-            t.setLibraries(mcAllDeps);
+            t.setLibraries(smDeps);
             if (!extension.experimentalThreadedFF) {
                 t.setNumThreads(0);
             }
@@ -337,12 +335,12 @@ public class LoomGradlePlugin implements Plugin<Project> {
             });
         });
         remapNamedLineNumbersTask = tasks.register("remapNamedLineNumbers", RemapLineNumbersTask.class, t -> {
-            t.dependsOn(remapMinecraftNamedTask, decompileMinecraftNamedTask);
-            t.setInput(laterTaskOutput(remapMinecraftNamedTask));
+            t.dependsOn(remapStarMadeNamedTask, decompileStarMadeNamedTask);
+            t.setInput(laterTaskOutput(remapStarMadeNamedTask));
             t.setOutput(laterFile(() -> remap(namedLinemappedArtifact).subst(substr).toFile(remappedRepo)));
             t.setLineMap(laterFile(() -> remap(namedLinemapArtifact).subst(substr).toFile(remappedRepo)));
         });
-        project.afterEvaluate(p -> dependencies.add("minecraftNamedLinemapped", remap(namedLinemappedArtifact).subst(substr).toString()));
+        project.afterEvaluate(p -> dependencies.add("starmadeNamedLinemapped", remap(namedLinemappedArtifact).subst(substr).toString()));
 
         remapModCompileTask = tasks.register("remapModCompile", t -> {
             t.getOutputs().upToDateWhen((e) -> false);
@@ -396,22 +394,22 @@ public class LoomGradlePlugin implements Plugin<Project> {
                 MavenNotation remappedNotation = remap(notation);
                 String tskName = notation.toString().replace(":", "");
                 TaskProvider<TinyRemapTask> remapClasses = tasks.register("remapDependency_" + tskName, TinyRemapTask.class, t -> {
-                    t.dependsOn(extractMappingsTask, remapMinecraftIntermediaryTask);
+                    t.dependsOn(extractMappingsTask, remapStarMadeIntermediaryTask);
                     t.addMappings(laterTaskOutput(extractMappingsTask));
                     t.setFromMappings("intermediary");
                     t.setToMappings("named");
-                    t.setLibraries(mcAllDeps.plus(mcIntermediary));
+                    t.setLibraries(smDeps.plus(smIntermediary));
                     t.setInput(classes);
                     t.setOutput(remappedNotation.toFile(remappedRepo));
                 });
                 TaskProvider<SourcesRemapTask> remapSources;
                 if (sources.get() != null) {
                     remapSources = tasks.register("remapDependencySources_" + tskName, SourcesRemapTask.class, t -> {
-                        t.dependsOn(extractMappingsTask, remapMinecraftIntermediaryTask);
+                        t.dependsOn(extractMappingsTask, remapStarMadeIntermediaryTask);
                         t.addMappings(laterTaskOutput(extractMappingsTask));
                         t.setFromMappings("intermediary");
                         t.setToMappings("named");
-                        t.setLibraries(mcAllDeps.plus(mcIntermediary));
+                        t.setLibraries(smDeps.plus(smIntermediary));
                         t.setInput(sources.get());
                         t.setOutput(remappedNotation.withClassifier("sources").toFile(remappedRepo));
                     });
@@ -431,8 +429,8 @@ public class LoomGradlePlugin implements Plugin<Project> {
 
         ideSetupTask = tasks.register("ideSetup", t -> {
             t.setGroup("loom-ide");
-            t.dependsOn(decompileMinecraftNamedTask, remapNamedLineNumbersTask, dlAssetsTask, remapModCompileTask);
-            compile.extendsFrom(mcNamedLinemapped);
+            t.dependsOn(decompileStarMadeNamedTask, remapNamedLineNumbersTask, dlAssetsTask, remapModCompileTask);
+            compile.extendsFrom(smNamedLinemapped);
         });
 
         genIdeaRuns = tasks.register("genIdeaRuns", GenIdeaRunConfigsTask.class, t -> {
@@ -449,7 +447,7 @@ public class LoomGradlePlugin implements Plugin<Project> {
         File mixinMappingsOutput = new File(project.getBuildDir(), "remapJar/mixin.tiny");
         TaskProvider<JavaCompile> compileJavaTask = tasks.withType(JavaCompile.class).named("compileJava");
         compileJavaTask.configure(t -> {
-            t.dependsOn(extractMappingsTask, remapMinecraftNamedTask, remapModCompileTask);
+            t.dependsOn(extractMappingsTask, remapStarMadeNamedTask, remapModCompileTask);
 
             //This is kinda funky, but we assure that extractMappingsTask has been executed before adding args.
             t.getOptions().getCompilerArgumentProviders().add(() -> {
@@ -527,12 +525,12 @@ public class LoomGradlePlugin implements Plugin<Project> {
                 spec.from(convention.getSourceSets().getByName("main").getAllSource());
                 spec.into(tempInput);
             }));
-            t.dependsOn(remapMinecraftNamedTask);
+            t.dependsOn(remapStarMadeNamedTask);
             t.addMappings(laterTaskOutput(extractMappingsTask));
             t.addMappings(mixinMappingsOutput);
             t.setFromMappings("named");
             t.setToMappings("intermediary");
-            t.setLibraries(mcAllDeps.plus(mcNamed).plus(remappedDeps));
+            t.setLibraries(smDeps.plus(smNamed).plus(remappedDeps));
             t.setInput(tempInput);
             t.setOutput(new File(t.getTemporaryDir(), "output.jar"));
             t.setSimpleCache(true);
@@ -555,12 +553,12 @@ public class LoomGradlePlugin implements Plugin<Project> {
         //TODO,  it should really remove the artifact from the Jar task and add a new one,
         //TODO,  that appears to be easier said than done..
         remapJarTask = tasks.register("remapJar", TinyRemapTask.class, t -> {
-            t.dependsOn(extractMappingsTask, remapMinecraftNamedTask);
+            t.dependsOn(extractMappingsTask, remapStarMadeNamedTask);
             t.addMappings(laterTaskOutput(extractMappingsTask));
             t.addMappings(mixinMappingsOutput);
             t.setFromMappings("named");
             t.setToMappings("intermediary");
-            t.setLibraries(mcAllDeps.plus(mcNamed).plus(remappedDeps));
+            t.setLibraries(smDeps.plus(smNamed).plus(remappedDeps));
             t.setInput(laterTaskOutput(jarTask));
             t.setOutput(laterTaskOutput(jarTask));
             t.setSimpleCache(true);
@@ -571,7 +569,7 @@ public class LoomGradlePlugin implements Plugin<Project> {
 
         //temp task, depends on all end points.
         Task tempTask = tasks.create("testTheStuff");
-        tempTask.dependsOn(dlAssetsTask, remapMinecraftIntermediaryTask, remapMinecraftNamedTask, remapModCompileTask);
+        tempTask.dependsOn(dlAssetsTask, remapStarMadeIntermediaryTask, remapStarMadeNamedTask, remapModCompileTask);
     }
 
     public MavenNotation remap(MavenNotation notation) {

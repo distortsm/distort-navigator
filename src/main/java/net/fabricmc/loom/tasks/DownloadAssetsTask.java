@@ -27,7 +27,7 @@ package net.fabricmc.loom.tasks;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.io.Files;
-import net.fabricmc.loom.LoomGradlePlugin;
+import net.fabricmc.loom.data.AssetIndexFormat;
 import net.fabricmc.loom.data.AssetIndexJson;
 import net.fabricmc.loom.tasks.download.DownloadAction;
 import net.fabricmc.loom.util.Utils;
@@ -53,16 +53,18 @@ import static net.fabricmc.loom.util.Utils.sneaky;
 /**
  * Created by covers1624 on 5/02/19.
  */
-public class DownloadAssetsTask extends DefaultTask {
+public abstract class DownloadAssetsTask extends DefaultTask {
 
     private Object assetIndex;
     private File assetsDir;
     private List<File> outputFiles = new ArrayList<>();
+    private AssetIndexFormat assetIndexFormat = AssetIndexFormat.JSON;
 
     private transient Map<String, DownloadAction> toExecute = new HashMap<>();
     private transient AssetIndexJson assetIndexJson;
 
     public DownloadAssetsTask() {
+
         onlyIf(e -> {
             //Use this onlyIf section to lazy resolve the DownloadAction's and declare outputs.
             resolve();
@@ -124,17 +126,29 @@ public class DownloadAssetsTask extends DefaultTask {
         progressGroup.completed();
     }
 
+    protected abstract String getAssetUrl(String name, AssetIndexJson.AssetObject object);
+
+    protected abstract String getResourceUrl();
+
     private void resolve() {
         if (assetIndexJson != null) {
             return;
         }
         File assetIndex = getAssetIndex();
         String indexName = Files.getNameWithoutExtension(assetIndex.getName());
-        assetIndexJson = AssetIndexJson.fromJson(assetIndex);
+        if (assetIndexFormat == AssetIndexFormat.JSON) {
+                assetIndexJson = AssetIndexJson.fromJson(assetIndex);
+        } else if (assetIndexFormat == AssetIndexFormat.STARMADE) {
+            try { assetIndexJson = AssetIndexJson.fromStarMadeChecksums(assetIndex); }
+            catch(Exception e) { throw new RuntimeException(e); }
+        } else {
+            throw new RuntimeException("Unsupported asset index format " + assetIndexFormat.toString());
+        }
+
         assetIndexJson.objects.forEach((name, object) -> {
             DownloadAction action = new DownloadAction(getProject());
 
-            String loc = object.hash.substring(0, 2) + "/" + object.hash;
+            String loc = getAssetUrl(name, object);
             File out;
             if (!assetIndexJson.virtual) {
                 out = new File(assetsDir, "objects/" + loc);
@@ -142,7 +156,7 @@ public class DownloadAssetsTask extends DefaultTask {
                 out = new File(assetsDir, format("virtual/{0}/{1}", indexName, name));
             }
 
-            action.setSrc(LoomGradlePlugin.RESOURCES_URL + loc);
+            action.setSrc(getResourceUrl() + loc);
             action.setDest(out);
             action.setQuiet(true);
             //Always declare the outputs.
@@ -163,9 +177,10 @@ public class DownloadAssetsTask extends DefaultTask {
     }
 
     //@formatter:off
-    @Input public File getAssetIndex() { return getProject().file(assetIndex); }
+    @Input public File getAssetIndex() { return assetIndex instanceof File ? (File)assetIndex : getProject().file(assetIndex); }
     @OutputFiles public List<File> getOutputFiles() { return outputFiles; }
     public void setAssetIndex(Object assetIndex) { this.assetIndex = assetIndex; }
     public void setAssetsDir(File assetsDir) { this.assetsDir = assetsDir; }
+    public void setAssetFormat(AssetIndexFormat format) { this.assetIndexFormat = format; }
     //@formatter:on
 }

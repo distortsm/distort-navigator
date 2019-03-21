@@ -24,14 +24,19 @@
 
 package net.fabricmc.loom.data;
 
+import com.google.common.base.Strings;
 import com.google.common.hash.HashCode;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.loom.util.MavenNotation;
 import net.fabricmc.loom.util.Utils;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,6 +61,37 @@ public class VersionInfoJson {
 
     public static VersionInfoJson fromJson(File file) {
         return Utils.fromJson(gson, file, VersionInfoJson.class);
+    }
+
+    public static VersionInfoJson fromStarMadeChecksums(File file, URL baseUrl) throws IOException {
+        VersionInfoJson versionInfo = new VersionInfoJson();
+        versionInfo.downloads = new HashMap<String,Download>();
+        versionInfo.assetIndex = versionInfo.new AssetIndex(){{
+            url = new URL(baseUrl, baseUrl.getPath() + "checksums");
+            id = baseUrl.getPath().substring(baseUrl.getPath().lastIndexOf("starmade-build") + 15, baseUrl.getPath().lastIndexOf("/"));
+        }};
+
+        FileUtils.readLines(file, "UTF-8").stream()
+            .filter(entry -> !Strings.isNullOrEmpty(entry))
+            .forEach(entry -> {
+                try{
+                    String[] tokens = entry.split(" ");
+                    String name = entry.substring(0, entry.length() - tokens[tokens.length - 1].length() - tokens[tokens.length - 2].length() - 2);
+                    if(tokens[0].startsWith("./data/")) {
+                        return; // ignore
+                    } else  if(name.toLowerCase().endsWith(".jar") || name.toLowerCase().startsWith("./native/")) {
+                        versionInfo.downloads.put(name.substring(2),
+                        versionInfo.new Download() {{
+                                url = new URL(baseUrl, baseUrl.getPath() + tokens[0]);
+                                sha1 = HashCode.fromString(tokens[2]);
+                            }});
+                    }
+                }
+                catch(Exception e) { e.printStackTrace(); }
+            });
+
+
+        return versionInfo;
     }
 
     public class AssetIndex {

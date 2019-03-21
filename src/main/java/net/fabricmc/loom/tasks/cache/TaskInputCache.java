@@ -131,7 +131,9 @@ public class TaskInputCache {
     }
 
     private static TaskClass lookup(Class<?> clazz) {
-        return cache.computeIfAbsent(clazz, TaskClass::new);
+        synchronized(cache) {
+            return cache.computeIfAbsent(clazz, TaskClass::new);
+        }
     }
 
     private static File getComplexCache(TaskClass.CachedProperty output, Task task, boolean forcedSimple) {

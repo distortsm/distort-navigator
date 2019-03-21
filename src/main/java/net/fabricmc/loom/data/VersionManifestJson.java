@@ -24,13 +24,20 @@
 
 package net.fabricmc.loom.data;
 
+import com.google.common.base.Strings;
 import com.google.gson.Gson;
+
+import org.apache.commons.io.FileUtils;
+
+import net.fabricmc.loom.NavigatorGradlePlugin;
 import net.fabricmc.loom.util.Utils;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Created by covers1624 on 5/02/19.
@@ -50,6 +57,25 @@ public class VersionManifestJson {
 
     public static VersionManifestJson fromJson(File file) {
         return Utils.fromJson(gson, file, VersionManifestJson.class);
+    }
+
+    public static VersionManifestJson fromStarMadeIndex(File file) throws IOException{
+        VersionManifestJson manifest = new VersionManifestJson();
+
+        manifest.versions = FileUtils.readLines(file, "UTF-8").stream()
+            .filter(entry -> !Strings.isNullOrEmpty(entry))
+            .map(entry -> {
+                String[] tokens = entry.split(" ");
+                String[] build_id = tokens[0].split("#");
+                return new Version() {{
+                    id = build_id[0];
+                    releaseTime = build_id[1];
+                    url = NavigatorGradlePlugin.RESOURCES_URL + tokens[1] + "/";
+                }};
+            })
+            .collect(Collectors.toList());
+
+        return manifest;
     }
 
     public static class Latest {
