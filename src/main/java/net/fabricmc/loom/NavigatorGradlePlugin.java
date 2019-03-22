@@ -186,7 +186,7 @@ public class NavigatorGradlePlugin implements Plugin<Project> {
             dependencies.add("annotationProcessor", project.files(dep));
         }
 
-        compile.extendsFrom(smDeps, smNatives, remappedDeps, remappedTransitiveDeps);
+        compile.extendsFrom(smDeps, smNatives, remappedDeps, remappedTransitiveDeps, smNamed);
         annotationProcessor.extendsFrom(compile);
 
         project.afterEvaluate(p -> {

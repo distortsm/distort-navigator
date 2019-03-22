@@ -83,6 +83,10 @@ gradlePlugin {
 			id = "fabric-loom"
 			implementationClass = "net.fabricmc.loom.LoomGradlePlugin"
 		}
+		register("distortNavigator") {
+			id = "distort-navigator"
+			implementationClass = "net.fabricmc.loom.NavigatorGradlePlugin"
+		}
 	}
 }
 
