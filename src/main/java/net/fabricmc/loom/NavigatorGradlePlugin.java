@@ -171,6 +171,8 @@ public class NavigatorGradlePlugin implements Plugin<Project> {
         project.getPlugins().apply("java");
 
         Configuration compile = configurations.getByName("compile");
+        Configuration compileOnly = configurations.getByName("compileOnly");
+        Configuration testCompileOnly = configurations.getByName("testCompileOnly");
         Configuration smDeps = configurations.maybeCreate(CONFIG_STARMADE_DEPS);
         Configuration smNatives = configurations.maybeCreate(CONFIG_STARMADE_NATIVES);
         Configuration smIntermediary = configurations.maybeCreate("starmadeIntermediary");
@@ -186,7 +188,10 @@ public class NavigatorGradlePlugin implements Plugin<Project> {
             dependencies.add("annotationProcessor", project.files(dep));
         }
 
-        compile.extendsFrom(smDeps, smNatives, remappedDeps, remappedTransitiveDeps, smNamed);
+        compile.extendsFrom(smNatives, remappedDeps, remappedTransitiveDeps);
+        compileOnly.extendsFrom(smNamed, smDeps);
+        testCompileOnly.extendsFrom(smNamed, smDeps);
+
         annotationProcessor.extendsFrom(compile);
 
         project.afterEvaluate(p -> {
