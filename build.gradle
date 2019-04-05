@@ -11,12 +11,14 @@ targetCompatibility = 1.8
 
 group = 'net.fabricmc'
 archivesBaseName = project.name
-version = '0.3.0-SNAPSHOT'
+version = '0.3.1-SNAPSHOT'
 
 def build = "local"
 def ENV = System.getenv()
 if (ENV.BUILD_NUMBER) {
 	build = "jenkins #${ENV.BUILD_NUMBER}"
+} else {
+	version = "${version}.local"
 }
 
 repositories {
@@ -35,10 +37,10 @@ dependencies {
 	implementation ('commons-io:commons-io:2.6')
 	implementation ('com.google.code.gson:gson:2.8.5')
 	implementation ('com.google.guava:guava:27.0.1-jre')
-	implementation ('net.fabricmc:stitch:0.1.1.43') {
+	implementation ('net.fabricmc:stitch:0.1.+') {
         exclude module: 'enigma'
     }
-    implementation ('net.fabricmc:tiny-remapper:0.1.0.23') {
+    implementation ('net.fabricmc:tiny-remapper:0.1.+') {
 		transitive = false
 	}
 //	implementation ('org.benf:cfr:0.136')
@@ -79,12 +81,10 @@ task wrapper(type: Wrapper) {
 
 gradlePlugin {
 	plugins {
-		register("fabricLoom") {
-			id = "fabric-loom"
-			implementationClass = "net.fabricmc.loom.LoomGradlePlugin"
-		}
-		register("distortNavigator") {
-			id = "distort-navigator"
+		navigatorJitpackPlugin {
+			id = "com.github.distortsm.navigator"
+			displayName = "Distort Navigator Plugin"
+			description = "StarMade modding plugin for building mods for StarMade."
 			implementationClass = "net.fabricmc.loom.NavigatorGradlePlugin"
 		}
 	}
