@@ -127,15 +127,15 @@ public class MixinMappingProviderTiny extends MappingProvider {
     @Override
     public void read(File input) throws IOException {
         try (BufferedReader reader = Files.newBufferedReader(input.toPath())) {
-            TinyUtils.read(reader, from, to, classMap::put, (fieldFrom, fieldTo) -> {
+            TinyUtils.read(reader, from, to, classMap::put, (fieldFrom, desc) -> {
                 fieldMap.put(//
-                        new MappingField(fieldFrom.owner, fieldFrom.name, fieldFrom.desc),//
-                        new MappingField(fieldTo.owner, fieldTo.name, fieldTo.desc)//
+                    new MappingField(fieldFrom.owner, fieldFrom.name, fieldFrom.desc),//
+                    new MappingField(fieldFrom.owner, fieldFrom.name, desc)//
                 );
-            }, (methodFrom, methodTo) -> {
+            }, (methodFrom, desc) -> {
                 methodMap.put(//
-                        new MappingMethod(methodFrom.owner, methodFrom.name, methodFrom.desc),//
-                        new MappingMethod(methodTo.owner, methodTo.name, methodTo.desc)//
+                    new MappingMethod(methodFrom.owner, methodFrom.name, methodFrom.desc),//
+                    new MappingMethod(methodFrom.owner, methodFrom.name, desc)//
                 );
             });
         }

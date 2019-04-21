@@ -78,9 +78,9 @@ public class TinyRemapTask extends CachedInputTask {
         try (OutputConsumerPath outputConsumer = new OutputConsumerPath(output.toPath())) {
             Path inputPath = input.toPath();
             outputConsumer.addNonClassFiles(inputPath);
-            remapper.read(inputPath);
-            remapper.read(getLibraries().getFiles().stream().map(File::toPath).toArray(Path[]::new));
-            remapper.apply(inputPath, outputConsumer);
+            remapper.readInputs(inputPath);
+            remapper.readClassPath(getLibraries().getFiles().stream().map(File::toPath).toArray(Path[]::new));
+            remapper.apply(outputConsumer);
         } finally {
             remapper.finish();
         }
