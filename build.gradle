@@ -9,20 +9,14 @@ plugins {
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
-group = 'net.fabricmc'
+group = 'com.github.distortsm'
 archivesBaseName = project.name
-version = '0.3.1-SNAPSHOT'
 
 def build = "local"
 def ENV = System.getenv()
-if (ENV.BUILD_NUMBER) {
-	build = "jenkins #${ENV.BUILD_NUMBER}"
-} else {
-	version = "${version}.local"
-}
+version = version + "." + (ENV.BUILD_NUMBER ? ENV.BUILD_NUMBER : "local")
 
 repositories {
-    mavenLocal()
 	mavenCentral()
     jcenter()
 	maven {
@@ -86,32 +80,6 @@ gradlePlugin {
 			displayName = "Distort Navigator Plugin"
 			description = "StarMade modding plugin for building mods for StarMade."
 			implementationClass = "net.fabricmc.loom.NavigatorGradlePlugin"
-		}
-	}
-}
-
-publishing {
-	publications {
-		plugin(MavenPublication) { publication ->
-			groupId project.group
-			artifactId project.archivesBaseName
-			version project.version
-
-			from components["java"]
-	
-			artifact sourcesJar
-			artifact javadocJar
-		}
-	}
-	repositories {
-		maven {
-			url "http://mavenupload.modmuss50.me/"
-			if (project.hasProperty('mavenPass')) {
-				credentials {
-					username 'buildslave'
-					password project.getProperty('mavenPass')
-				}
-			}
 		}
 	}
 }
